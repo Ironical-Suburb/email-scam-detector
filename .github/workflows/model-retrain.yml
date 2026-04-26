@@ -1,0 +1,152 @@
+name: Monthly Model Retraining
+
+on:
+  # First Sunday of every month at 02:00 UTC
+  schedule:
+    - cron: "0 2 1-7 * 0"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — evaluate only, do not replace production model"
+        type: boolean
+        default: false
+
+concurrency:
+  group: model-retrain
+  cancel-in-progress: false
+
+jobs:
+  export-feedback:
+    name: Export user feedback from production DB
+    runs-on: ubuntu-latest
+    outputs:
+      feedback_count: ${{ steps.count.outputs.count }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install asyncpg sqlalchemy pandas
+
+      - name: Export confirmed feedback rows
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          python - <<'EOF'
+          import asyncio, os, pandas as pd
+          from sqlalchemy.ext.asyncio import create_async_engine
+
+          async def export():
+              engine = create_async_engine(os.environ["DATABASE_URL"])
+              async with engine.connect() as conn:
+                  result = await conn.execute(
+                      "SELECT email_id, body_text, scam_type, user_confirmed "
+                      "FROM flagged_emails WHERE user_confirmed IS NOT NULL "
+                      "AND created_at > NOW() - INTERVAL '60 days'"
+                  )
+                  rows = result.fetchall()
+              df = pd.DataFrame(rows, columns=["email_id", "body_text", "scam_type", "label"])
+              df.to_csv("data/processed/feedback_export.csv", index=False)
+              print(f"Exported {len(df)} feedback rows")
+
+          asyncio.run(export())
+          EOF
+
+      - name: Count feedback rows
+        id: count
+        run: |
+          count=$(python -c "import pandas as pd; df=pd.read_csv('data/processed/feedback_export.csv'); print(len(df))")
+          echo "count=$count" >> $GITHUB_OUTPUT
+          echo "Feedback rows: $count"
+
+      - name: Upload feedback data
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedback-data-${{ github.run_id }}
+          path: data/processed/feedback_export.csv
+          retention-days: 30
+
+  retrain-classifier:
+    name: Retrain DistilBERT on feedback + original data
+    runs-on: ubuntu-latest
+    needs: export-feedback
+    if: ${{ needs.export-feedback.outputs.feedback_count >= 100 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ML dependencies
+        run: pip install torch transformers sentence-transformers pandas scikit-learn
+
+      - name: Download feedback data
+        uses: actions/download-artifact@v4
+        with:
+          name: feedback-data-${{ github.run_id }}
+          path: data/processed/
+
+      - name: Retrain classifier (incremental)
+        run: |
+          python scripts/training/train_classifier.py \
+            --feedback-csv data/processed/feedback_export.csv \
+            --incremental
+
+      - name: Evaluate model against held-out set
+        id: eval
+        run: |
+          python - <<'EOF'
+          import json, pathlib
+          metrics = json.loads(pathlib.Path("models/classifier/eval_metrics.json").read_text())
+          print(f"F1: {metrics['f1']:.4f}  Precision: {metrics['precision']:.4f}  Recall: {metrics['recall']:.4f}")
+          # Fail the job if F1 drops below baseline
+          assert metrics["f1"] >= 0.85, f"F1 {metrics['f1']:.4f} is below 0.85 threshold"
+          EOF
+
+      - name: Upload retrained model
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrained-classifier-${{ github.run_id }}
+          path: models/classifier/
+          retention-days: 90
+
+  skip-retrain:
+    name: Not enough feedback to retrain
+    runs-on: ubuntu-latest
+    needs: export-feedback
+    if: ${{ needs.export-feedback.outputs.feedback_count < 100 }}
+
+    steps:
+      - name: Explain skip
+        run: |
+          echo "Only ${{ needs.export-feedback.outputs.feedback_count }} confirmed feedback rows available (need ≥ 100). Skipping retraining."
+          echo "### Retraining skipped" >> $GITHUB_STEP_SUMMARY
+          echo "Feedback rows: ${{ needs.export-feedback.outputs.feedback_count }} / 100 minimum." >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Post retraining report
+    runs-on: ubuntu-latest
+    needs: [retrain-classifier, skip-retrain]
+    if: always()
+
+    steps:
+      - name: Write job summary
+        run: |
+          echo "### Monthly Retraining Report — $(date -u +'%Y-%m-%d')" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Retrain classifier | ${{ needs.retrain-classifier.result || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "> **Dry run** — model artifact saved but NOT deployed to production." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> Download the artifact and upload to your model storage to deploy." >> $GITHUB_STEP_SUMMARY
+          fi
