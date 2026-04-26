@@ -46,7 +46,10 @@ def load_jsonl(path: str) -> list[dict]:
 
 
 def make_dataset(records: list[dict], tokenizer) -> Dataset:
-    texts = [r.get("body", "")[:512] for r in records]
+    texts = [
+        f"{r.get('subject', '')} [SEP] {r.get('body', '')[:2048]}"
+        for r in records
+    ]
     labels = [LABEL2ID.get(r.get("scam_type", "not_scam"), LABEL2ID["not_scam"]) for r in records]
     enc = tokenizer(texts, truncation=True, max_length=512)
     enc["labels"] = labels
@@ -57,7 +60,11 @@ def compute_metrics(eval_pred):
     logits, labels = eval_pred
     preds = logits.argmax(-1)
     report = classification_report(
-        labels, preds, target_names=SCAM_LABELS, output_dict=True, zero_division=0
+        labels, preds,
+        labels=list(range(len(SCAM_LABELS))),
+        target_names=SCAM_LABELS,
+        output_dict=True,
+        zero_division=0,
     )
     return {
         "accuracy": report["accuracy"],
@@ -84,9 +91,9 @@ def train(args):
         num_train_epochs=4,
         per_device_train_batch_size=16,
         per_device_eval_batch_size=32,
-        warmup_steps=200,
+        warmup_ratio=0.05,
         weight_decay=0.01,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="macro_f1",
@@ -107,7 +114,6 @@ def train(args):
 
     trainer.train()
     trainer.save_model(args.out)
-    tokenizer.save_pretrained(args.out)
     print(f"\nModel saved → {args.out}")
 
 
