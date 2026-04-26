@@ -29,7 +29,7 @@ SCAM_LABELS = [
 
 def load_jsonl(path: Path) -> list[dict]:
     records = []
-    with path.open() as f:
+    with path.open(encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -68,7 +68,7 @@ def save_jsonl(records: list, path: Path) -> None:
     with path.open("w") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
-    print(f"  {len(records):>6} records → {path}")
+    print(f"  {len(records):>6} records -> {path}")
 
 
 if __name__ == "__main__":

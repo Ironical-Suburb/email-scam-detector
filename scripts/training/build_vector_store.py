@@ -42,7 +42,7 @@ def build(args):
     for i in tqdm(range(0, len(records), batch_size)):
         batch = records[i : i + batch_size]
         texts = [r.get("body", "")[:512] for r in batch]
-        embeddings = embedder.encode(texts, convert_to_list=True)
+        embeddings = embedder.encode(texts).tolist()
 
         ids = [f"email_{i + j}" for j in range(len(batch))]
         metadatas = [
@@ -60,7 +60,7 @@ def build(args):
             metadatas=metadatas,
         )
 
-    print(f"\nVector store built → {args.chroma_dir}")
+    print(f"\nVector store built -> {args.chroma_dir}")
     print(f"Total vectors: {collection.count()}")
 
 
