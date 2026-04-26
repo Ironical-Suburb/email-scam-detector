@@ -73,13 +73,21 @@ def compute_metrics(eval_pred):
 
 
 def train(args):
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA not available. Verify your PyTorch installation: "
+            "run `python -c 'import torch; print(torch.cuda.is_available())'`"
+        )
+    device = torch.device("cuda")
+    print(f"Training on: {torch.cuda.get_device_name(0)}")
+
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     model = AutoModelForSequenceClassification.from_pretrained(
         BASE_MODEL,
         num_labels=len(SCAM_LABELS),
         id2label=ID2LABEL,
         label2id=LABEL2ID,
-    )
+    ).to(device)
 
     train_records = load_jsonl(args.train)
     val_records = load_jsonl(args.val)
