@@ -22,9 +22,10 @@ credentials.json
 # ML artifacts (large binaries — store in cloud storage)
 models/
 data/raw/
+data/processed/
 data/chroma/
 
-# Processed data is checked in for reproducibility
+# Keep directory markers
 !data/processed/.gitkeep
 
 # Docker

@@ -145,7 +145,7 @@ def load_spamassassin(root: Path, out_f) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="data/raw/enron_spam.jsonl")
-    parser.add_argument("--limit", type=int, default=20_000,
+    parser.add_argument("--limit", type=int, default=30_000,
                         help="Max emails to load from HuggingFace")
     parser.add_argument("--local", action="store_true",
                         help="Load from local dirs instead of HuggingFace")

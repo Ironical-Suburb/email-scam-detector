@@ -16,14 +16,15 @@ from pathlib import Path
 
 
 SCAM_LABELS = [
-    "irs_impersonation",
-    "tech_support",
-    "lottery_prize",
-    "bank_fraud",
+    "not_scam",
+    "phishing",
+    "spam",
     "romance_scam",
     "package_delivery",
-    "grandparent_scam",
-    "not_scam",
+    "tech_support",
+    "bank_fraud",
+    "lottery_prize",
+    "elder_targeted",
 ]
 
 
